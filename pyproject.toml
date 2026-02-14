@@ -1,0 +1,37 @@
+[build-system]
+requires = ["setuptools>=64", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "hicoros"
+version = "0.1.1"
+description = "Hi COROS"
+authors = [{ name = "Zhiqiang Wang" }]
+requires-python = ">=3.12"
+dependencies = [
+	"prcoords",
+	"fit-tool",
+	"garmin-fit-sdk",
+]
+
+[project.scripts]
+hicoros = "hicoros.hitrava:main"
+hicoros-fit-check = "hicoros.fit_check_cli:main"
+
+[tool.setuptools]
+include-package-data = true
+
+[tool.setuptools.packages.find]
+exclude = ["tests*"]
+
+[tool.black]
+line-length = 120
+target-version = ['py310']
+
+[tool.pytest.ini_options]
+addopts = "-k 'not long'"
+log_cli = true
+log_cli_level = "DEBUG"
+
+[tool.isort]
+profile = "google"
