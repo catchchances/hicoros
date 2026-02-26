@@ -101,7 +101,6 @@ source = { editable = "." }
 dependencies = [
     { name = "fit-tool" },
     { name = "garmin-fit-sdk" },
-    { name = "prcoords" },
 ]
 
 [package.optional-dependencies]
@@ -113,7 +112,6 @@ test = [
 requires-dist = [
     { name = "fit-tool" },
     { name = "garmin-fit-sdk" },
-    { name = "prcoords" },
     { name = "pytest", marker = "extra == 'test'" },
 ]
 provides-extras = ["test"]
@@ -156,12 +154,6 @@ sdist = { url = "https://files.pythonhosted.org/packages/f9/e2/3e91f31a7d2b083fe
 wheels = [
     { url = "https://files.pythonhosted.org/packages/54/20/4d324d65cc6d9205fabedc306948156824eb9f0ee1633355a8f7ec5c66bf/pluggy-1.6.0-py3-none-any.whl", hash = "sha256:e920276dd6813095e9377c0bc5566d94c932c33b27a3e3945d8389c374dd4746", size = 20538, upload-time = "2025-05-15T12:30:06.134Z" },
 ]
-
-[[package]]
-name = "prcoords"
-version = "1.0.2"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/5d/4b/a77264c82300976f769fb2cbf3c466ddb8d07adea2c2c7bbabe95a41aff6/prcoords-1.0.2.tar.gz", hash = "sha256:9d3bc12667b19dffac2769df17c735e6a6f91e154f8fbdddc95bd816def9fe3d", size = 7429, upload-time = "2019-08-17T05:35:37.733Z" }
 
 [[package]]
 name = "pygments"

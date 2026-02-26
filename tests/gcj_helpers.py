@@ -1,7 +1,5 @@
 import math
 
-import prcoords
-
 
 GCJ_A = 6378245.0
 GCJ_EE = 0.00669342162296594323
@@ -40,7 +38,6 @@ def _delta(lat: float, lon: float) -> tuple[float, float]:
 
 
 def gcj02_to_wgs84_naive(lat: float, lon: float) -> tuple[float, float]:
-    """Legacy naive inverse conversion used as a baseline for testing."""
     if _out_of_china(lat, lon):
         return lat, lon
     d_lat, d_lon = _delta(lat, lon)
@@ -55,7 +52,6 @@ def _wgs84_to_gcj02(lat: float, lon: float) -> tuple[float, float]:
 
 
 def gcj02_to_wgs84_caijun(lat: float, lon: float, max_iter: int = 10, eps: float = 1e-12) -> tuple[float, float]:
-    """Caijun 2014 iterative inverse (fixed-point refinement)."""
     if _out_of_china(lat, lon):
         return lat, lon
 
@@ -70,11 +66,3 @@ def gcj02_to_wgs84_caijun(lat: float, lon: float, max_iter: int = 10, eps: float
             break
 
     return wgs_lat, wgs_lon
-
-
-def gcj02_to_wgs84(lat: float, lon: float) -> tuple[float, float]:
-    return tuple(prcoords.gcj_wgs((lat, lon), False))
-
-
-def gcj02_to_wgs84_precise(lat: float, lon: float) -> tuple[float, float]:
-    return tuple(prcoords.gcj_wgs_bored((lat, lon), False))

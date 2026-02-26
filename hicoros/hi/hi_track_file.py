@@ -44,6 +44,13 @@ class HiTrackFileParser:
         )
 
         data_list = []
+        pending_location_batch = []
+
+        def flush_location_batch():
+            if pending_location_batch:
+                self.activity.add_location_data_batch(pending_location_batch)
+                pending_location_batch.clear()
+
         with self.hitrack_file:
             csv_reader = csv.reader(self.hitrack_file, delimiter=";")
             for line in csv_reader:
@@ -53,49 +60,60 @@ class HiTrackFileParser:
                         key_value = item.split("=", 1)
                         if len(key_value) == 2 and key_value[0] in {"k", "lat", "lon", "t"}:
                             data_list.append(key_value)
-                    self.activity.add_location_data(data_list)
+                    pending_location_batch.append(data_list.copy())
                 elif line[0] == "tp=h-r":
+                    flush_location_batch()
                     for data_index in [1, 2]:
                         data_list.append(line[data_index].split("="))
                     self.activity.add_heart_rate_data(data_list)
                 elif line[0] == "tp=alti":
+                    flush_location_batch()
                     for data_index in [1, 2]:
                         data_list.append(line[data_index].split("="))
                     self.activity.add_altitude_data(data_list)
                 elif line[0] == "tp=s-r":
+                    flush_location_batch()
                     for item in line[1:]:
                         key_value = item.split("=", 1)
                         if len(key_value) == 2 and key_value[0] in {"k", "v"}:
                             data_list.append(key_value)
                     self.activity.add_step_frequency_data(data_list)
                 elif line[0] == "tp=swf":
+                    flush_location_batch()
                     for data_index in [1, 2]:
                         data_list.append(line[data_index].split("="))
                     self.activity.add_swolf_data(data_list)
                 elif line[0] == "tp=p-f":
+                    flush_location_batch()
                     for data_index in [1, 2]:
                         data_list.append(line[data_index].split("="))
                     self.activity.add_stroke_frequency_data(data_list)
                 elif line[0] == "tp=rs" or line[0] == "Tp=rs":
+                    flush_location_batch()
                     for item in line[1:]:
                         key_value = item.split("=", 1)
                         if len(key_value) == 2 and key_value[0] in {"k", "v"}:
                             data_list.append(key_value)
                     self.activity.add_speed_data(data_list)
                 elif line[0] == "tp=pm-n":
+                    flush_location_batch()
                     for data_index in [1, 2]:
                         data_list.append(line[data_index].split("="))
                     self.activity.add_interval_pace_data(data_list)
                 elif line[0] == "tp=p-m":
+                    flush_location_batch()
                     for data_index in [1, 2]:
                         data_list.append(line[data_index].split("="))
                     self.activity.add_pace_data(data_list)
                 elif line[0] == "tp=r-pm":
+                    flush_location_batch()
                     for item in line[1:]:
                         key_value = item.split("=", 1)
                         if len(key_value) == 2 and key_value[0] in {"k", "s", "P", "p"}:
                             data_list.append(key_value)
                     self.activity.add_realtime_speed_pace_data(data_list)
+
+            flush_location_batch()
 
         return self.activity
 

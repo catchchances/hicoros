@@ -1,17 +1,19 @@
 import collections
 import datetime
 import logging
-import math
 import operator
 from datetime import datetime as dts_delta_datetime
 from datetime import timedelta as dts_delta
 from typing import Optional
 
-from prcoords import gcj_wgs_bored
-
 from hicoros.constants import GPS_TIMEOUT
 from hicoros.constants import PROGRAM_NAME
 from hicoros.time_utils import convert_hitrack_timestamp
+from hicoros import _vincenty as vincenty_ext
+
+
+vincenty_distance_batch_m = vincenty_ext.vincenty_distance_batch_m
+gcj02_to_wgs84_batch = vincenty_ext.gcj02_to_wgs84_batch
 
 
 class HiActivity:
@@ -228,6 +230,9 @@ class HiActivity:
 
     # TODO Verify if something useful can be done with the (optional) altitude data in the tp=lbs records
     def add_location_data(self, data: list[list[str]]):
+        self.add_location_data_batch([data])
+
+    def add_location_data_batch(self, data_batch: list[list[list[str]]]):
         """Add location data from a tp=lbs record in the HiTrack file.
         Information:
         - When tracking an activity with a mobile phone only, the HiTrack files seem to contain altitude
@@ -243,46 +248,58 @@ class HiActivity:
         - Pause and stop records are identified by tp=lbs;lat=90;lon=-80;alt=0;t=<valid epoch time value or zero>
         """
 
-        logging.getLogger(PROGRAM_NAME).debug("Adding location data %s", data)
+        logging.getLogger(PROGRAM_NAME).debug("Adding location data batch with %d records", len(data_batch))
 
-        # Create a dictionary from the key value pairs
-        location_data = dict(data)
+        location_data_batch = []
+        gcj_points = []
+        gcj_point_indexes = []
 
-        # All raw values are floats (timestamp will be converted later)
-        for keys in location_data:
-            location_data[keys] = float(location_data[keys])
+        for data in data_batch:
+            # Create a dictionary from the key value pairs
+            location_data = dict(data)
 
-        # Keep raw tp=lbs index under a dedicated key for traceability/debugging.
-        if "k" in location_data:
-            location_data["lbs-k"] = location_data.pop("k")
+            # All raw values are floats (timestamp will be converted later)
+            for keys in location_data:
+                location_data[keys] = float(location_data[keys])
 
-        if location_data["t"] == 0 and location_data["lat"] == 90 and location_data["lon"] == -80:
-            # Pause/stop record without a valid epoch timestamp. Set it to the last timestamp recorded
-            location_data["t"] = self.stop
-        elif location_data["t"] == 0 and location_data["lat"] == 0 and location_data["lon"] == 0:
-            # Exception (Guess) - this type of record seems to be generated once at the start of the activtiy when no GPS data is available.
-            # Set the start timestamp (only possible in case of json or zip conversion).
-            logging.getLogger(PROGRAM_NAME).debug(
-                "Found zero location record. Setting activity start to reference %s", self.start_timestamp_ref
-            )
-            self.start = self.start_timestamp_ref
-        else:
-            # Regular location record or pause/stop record with valid epoch timestamp or seconds since start of day.
-            # Convert the timestamp to a datetime
-            location_data["t"] = convert_hitrack_timestamp(location_data["t"], timestamp_ref=self.timestamp_ref)
+            # Keep raw tp=lbs index under a dedicated key for traceability/debugging.
+            if "k" in location_data:
+                location_data["lbs-k"] = location_data.pop("k")
 
-            # Convert regular GCJ-02 coordinates to WGS84 using PRCoords precise iterative method.
-            # Keep pause/stop marker coordinates untouched.
-            if not self._is_marker_coordinate(location_data["lat"], location_data["lon"]):
-                location_data["lat"], location_data["lon"] = gcj_wgs_bored(
-                    (location_data["lat"], location_data["lon"]), check_china=True
+            if location_data["t"] == 0 and location_data["lat"] == 90 and location_data["lon"] == -80:
+                # Pause/stop record without a valid epoch timestamp. Set it to the last timestamp recorded
+                location_data["t"] = self.stop
+            elif location_data["t"] == 0 and location_data["lat"] == 0 and location_data["lon"] == 0:
+                # Exception (Guess) - this type of record seems to be generated once at the start of the activtiy when no GPS data is available.
+                # Set the start timestamp (only possible in case of json or zip conversion).
+                logging.getLogger(PROGRAM_NAME).debug(
+                    "Found zero location record. Setting activity start to reference %s", self.start_timestamp_ref
                 )
+                self.start = self.start_timestamp_ref
+            else:
+                # Regular location record or pause/stop record with valid epoch timestamp or seconds since start of day.
+                # Convert the timestamp to a datetime
+                location_data["t"] = convert_hitrack_timestamp(location_data["t"], timestamp_ref=self.timestamp_ref)
 
-            self.activity_params["gps"] = True
+                # Convert regular GCJ-02 coordinates to WGS84 using batched conversion.
+                # Keep pause/stop marker coordinates untouched.
+                if not self._is_marker_coordinate(location_data["lat"], location_data["lon"]):
+                    gcj_points.append((location_data["lat"], location_data["lon"]))
+                    gcj_point_indexes.append(len(location_data_batch))
+
+                self.activity_params["gps"] = True
+
+            location_data_batch.append(location_data)
+
+        if gcj_points:
+            converted_points = gcj02_to_wgs84_batch(gcj_points)
+            for index, converted in zip(gcj_point_indexes, converted_points):
+                location_data_batch[index]["lat"], location_data_batch[index]["lon"] = converted
 
         # Only add location data with a valid timestamp (ignore GPS loss or pause records at start of the location data)
-        if location_data["t"]:
-            self._add_data_detail(location_data)
+        for location_data in location_data_batch:
+            if location_data["t"]:
+                self._add_data_detail(location_data)
 
     def _get_last_location(self) -> Optional[dict]:
         """Returns the last location record in the data dictionary"""
@@ -293,89 +310,6 @@ class HiActivity:
                     return data
         # Empty data dictionary or no last location found in dictionary
         return None
-
-    # TODO - Discovered on 18 Feb 2020 that this method is a 1:1 copy of the code in the vincenty 0.1.4 package on pypi.org (https://pypi.org/project/vincenty/)
-    # TODO - Evaluate to either keep this method (facilitates easier install) versus import the vincenty 0.1.4 package
-    def _vincenty(self, point1: tuple, point2: tuple) -> float:
-        """
-        Update 2020-02-18 - Discovered that this method is a 1:1 copy of the code in the vincenty 0.1.4 package
-        on pypi.org (https://pypi.org/project/vincenty/) released under the Public Domain Unlicense license.
-
-        Determine distance between two coordinates
-
-        Parameters
-        ----------
-        point1 : Tuple
-            [Latitude of first point, Longitude of first point]
-        point2: Tuple
-            [Latitude of second point, Longitude of second point]
-
-        Returns
-        -------
-        s : float
-            distance in m between point1 and point2
-        """
-
-        # WGS 84
-        a = 6378137
-        f = 1 / 298.257223563
-        b = 6356752.314245
-        MAX_ITERATIONS = 200
-        CONVERGENCE_THRESHOLD = 1e-12
-        if point1[0] == point2[0] and point1[1] == point2[1]:
-            return 0.0
-        U1 = math.atan((1 - f) * math.tan(math.radians(point1[0])))
-        U2 = math.atan((1 - f) * math.tan(math.radians(point2[0])))
-        L = math.radians(point2[1] - point1[1])
-        Lambda = L
-        sinU1 = math.sin(U1)
-        cosU1 = math.cos(U1)
-        sinU2 = math.sin(U2)
-        cosU2 = math.cos(U2)
-        for iteration in range(MAX_ITERATIONS):
-            sinLambda = math.sin(Lambda)
-            cosLambda = math.cos(Lambda)
-            sinSigma = math.sqrt((cosU2 * sinLambda) ** 2 + (cosU1 * sinU2 - sinU1 * cosU2 * cosLambda) ** 2)
-            if sinSigma == 0:
-                return 0.0
-            cosSigma = sinU1 * sinU2 + cosU1 * cosU2 * cosLambda
-            sigma = math.atan2(sinSigma, cosSigma)
-            sinAlpha = cosU1 * cosU2 * sinLambda / sinSigma
-            cosSqAlpha = 1 - sinAlpha**2
-            try:
-                cos2SigmaM = cosSigma - 2 * sinU1 * sinU2 / cosSqAlpha
-            except ZeroDivisionError:
-                cos2SigmaM = 0
-            C = f / 16 * cosSqAlpha * (4 + f * (4 - 3 * cosSqAlpha))
-            LambdaPrev = Lambda
-            Lambda = L + (1 - C) * f * sinAlpha * (
-                sigma + C * sinSigma * (cos2SigmaM + C * cosSigma * (-1 + 2 * cos2SigmaM**2))
-            )
-            if abs(Lambda - LambdaPrev) < CONVERGENCE_THRESHOLD:
-                break
-        else:
-            logging.getLogger(PROGRAM_NAME).error("Failed to calculate distance between %s and %s", point1, point2)
-            raise Exception("Failed to calculate distance between %s and %s", point1, point2)
-
-        uSq = cosSqAlpha * (a**2 - b**2) / (b**2)
-        A = 1 + uSq / 16384 * (4096 + uSq * (-768 + uSq * (320 - 175 * uSq)))
-        B = uSq / 1024 * (256 + uSq * (-128 + uSq * (74 - 47 * uSq)))
-        deltaSigma = (
-            B
-            * sinSigma
-            * (
-                cos2SigmaM
-                + B
-                / 4
-                * (
-                    cosSigma * (-1 + 2 * cos2SigmaM**2)
-                    - B / 6 * cos2SigmaM * (-3 + 4 * sinSigma**2) * (-3 + 4 * cos2SigmaM**2)
-                )
-            )
-        )
-        s = b * A * (sigma - deltaSigma)
-
-        return round(s, 6)
 
     def add_heart_rate_data(self, data: list[list[str]]):
         """Add heart rate data from a tp=h-r record in the HiTrack file.
@@ -839,6 +773,36 @@ class HiActivity:
         # Sort the data dictionary by timestamp
         self.data_dict = collections.OrderedDict(sorted(self.data_dict.items()))
 
+        # Pre-calculate all required Vincenty distances in one C++ call to reduce Python<->C++ round-trips.
+        distance_pairs = []
+        pre_last_location = None
+        for data in self.data_dict.values():
+            if "lat" in data:
+                if pre_last_location:
+                    if data["lat"] == 90 and data["lon"] == -80:
+                        continue
+                    if "lat" not in pre_last_location:
+                        pre_last_location = data
+                    else:
+                        distance_pairs.append(
+                            (pre_last_location["lat"], pre_last_location["lon"], data["lat"], data["lon"])
+                        )
+                        pre_last_location = data
+                else:
+                    pre_last_location = data
+            elif "rs" in data and self._activity_type != HiActivity.TYPE_OPEN_WATER_SWIM:
+                if pre_last_location:
+                    time_delta = data["t"] - pre_last_location["t"]
+                    if "lat" not in pre_last_location or time_delta > GPS_TIMEOUT:
+                        pre_last_location = data
+                else:
+                    pre_last_location = data
+
+        batched_distances = vincenty_distance_batch_m(distance_pairs) if distance_pairs else []
+        if len(batched_distances) != len(distance_pairs):
+            raise RuntimeError("vincenty_distance_batch_m returned unexpected number of distances")
+        batched_distance_index = 0
+
         # Do calculations
         last_location = None
         paused = False
@@ -882,10 +846,9 @@ class HiActivity:
                             logging.getLogger(PROGRAM_NAME).debug("Stop pause at %s in %s", data["t"], self.activity_id)
                             paused = False
                         # Calculate and set the accumulative distance of the location record
-                        data["distance"] = (
-                            self._vincenty((last_location["lat"], last_location["lon"]), (data["lat"], data["lon"]))
-                            + last_location["distance"]
-                        )
+                        segment_distance = batched_distances[batched_distance_index]
+                        batched_distance_index += 1
+                        data["distance"] = segment_distance + last_location["distance"]
                         last_location = data
                 else:
                     # First location. Set distance 0

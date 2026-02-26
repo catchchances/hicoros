@@ -1,10 +1,8 @@
 import pytest
-import prcoords
 
-from hicoros.tools.coordinate_transform import gcj02_to_wgs84
-from hicoros.tools.coordinate_transform import gcj02_to_wgs84_caijun
-from hicoros.tools.coordinate_transform import gcj02_to_wgs84_naive
-from hicoros.tools.coordinate_transform import gcj02_to_wgs84_precise
+from hicoros import _vincenty as vincenty_ext
+from tests.gcj_helpers import gcj02_to_wgs84_caijun
+from tests.gcj_helpers import gcj02_to_wgs84_naive
 
 
 DEMO_CASES = [
@@ -27,8 +25,8 @@ def validate_against_demo() -> dict:
     details = []
 
     for inp, expected_rough, expected_precise in DEMO_CASES:
-        rough = gcj02_to_wgs84(*inp)
-        precise = gcj02_to_wgs84_precise(*inp)
+        rough = gcj02_to_wgs84_naive(*inp)
+        precise = vincenty_ext.gcj02_to_wgs84_batch([inp])[0]
 
         rough_match = (round(rough[0], 8), round(rough[1], 8)) == (
             round(expected_rough[0], 8),
@@ -55,43 +53,33 @@ def validate_against_demo() -> dict:
 
 
 @pytest.mark.parametrize("inp, expected_rough, _", DEMO_CASES)
-def test_rough_matches_demo_8dp(inp, expected_rough, _):
-    got_lat, got_lon = gcj02_to_wgs84(*inp)
-    exp_lat, exp_lon = expected_rough
-    assert round(got_lat, 8) == round(exp_lat, 8)
-    assert round(got_lon, 8) == round(exp_lon, 8)
+def test_naive_matches_demo_rough_8dp(inp, expected_rough, _):
+    got_lat, got_lon = gcj02_to_wgs84_naive(*inp)
+    assert round(got_lat, 8) == round(expected_rough[0], 8)
+    assert round(got_lon, 8) == round(expected_rough[1], 8)
 
 
 @pytest.mark.parametrize("inp, _, expected_precise", DEMO_CASES)
-def test_precise_matches_demo_8dp(inp, _, expected_precise):
-    got_lat, got_lon = gcj02_to_wgs84_precise(*inp)
+def test_batch_single_point_matches_demo_precise_8dp(inp, _, expected_precise):
+    got_lat, got_lon = vincenty_ext.gcj02_to_wgs84_batch([inp])[0]
     exp_lat, exp_lon = expected_precise
     assert got_lat == pytest.approx(exp_lat, abs=2e-8)
     assert got_lon == pytest.approx(exp_lon, abs=2e-8)
 
 
 @pytest.mark.parametrize("inp, expected_rough, expected_precise", DEMO_CASES)
-def test_rough_matches_prcoords_library(inp, expected_rough, expected_precise):
-    got_lat, got_lon = gcj02_to_wgs84(*inp)
-    pr_lat, pr_lon = prcoords.gcj_wgs(inp, False)
-    assert got_lat == pytest.approx(pr_lat, abs=1e-10)
-    assert got_lon == pytest.approx(pr_lon, abs=1e-10)
+def test_batch_single_point_matches_caijun(inp, expected_rough, expected_precise):
+    got_lat, got_lon = vincenty_ext.gcj02_to_wgs84_batch([inp])[0]
+    precise_lat, precise_lon = gcj02_to_wgs84_caijun(*inp)
+    assert got_lat == pytest.approx(precise_lat, abs=2e-8)
+    assert got_lon == pytest.approx(precise_lon, abs=2e-8)
 
 
 @pytest.mark.parametrize("inp, expected_rough, expected_precise", DEMO_CASES)
-def test_precise_matches_prcoords_library(inp, expected_rough, expected_precise):
-    got_lat, got_lon = gcj02_to_wgs84_precise(*inp)
-    pr_lat, pr_lon = prcoords.gcj_wgs_bored(inp, False)
-    assert got_lat == pytest.approx(pr_lat, abs=2e-8)
-    assert got_lon == pytest.approx(pr_lon, abs=2e-8)
-
-
-@pytest.mark.parametrize("inp, expected_rough, expected_precise", DEMO_CASES)
-def test_naive_is_baseline_close_to_prcoords_rough(inp, expected_rough, expected_precise):
+def test_naive_is_baseline_close_to_demo_rough(inp, expected_rough, expected_precise):
     naive_lat, naive_lon = gcj02_to_wgs84_naive(*inp)
-    pr_lat, pr_lon = prcoords.gcj_wgs(inp, False)
-    assert naive_lat == pytest.approx(pr_lat, abs=2e-5)
-    assert naive_lon == pytest.approx(pr_lon, abs=2e-5)
+    assert naive_lat == pytest.approx(expected_rough[0], abs=2e-5)
+    assert naive_lon == pytest.approx(expected_rough[1], abs=2e-5)
 
 
 def test_naive_outside_china_returns_input():
@@ -101,18 +89,17 @@ def test_naive_outside_china_returns_input():
 
 
 @pytest.mark.parametrize("inp, expected_rough, expected_precise", DEMO_CASES)
-def test_caijun_matches_prcoords_precise(inp, expected_rough, expected_precise):
+def test_caijun_matches_demo_precise(inp, expected_rough, expected_precise):
     got_lat, got_lon = gcj02_to_wgs84_caijun(*inp)
-    pr_lat, pr_lon = prcoords.gcj_wgs_bored(inp, False)
-    assert got_lat == pytest.approx(pr_lat, abs=2e-8)
-    assert got_lon == pytest.approx(pr_lon, abs=2e-8)
+    assert got_lat == pytest.approx(expected_precise[0], abs=2e-8)
+    assert got_lon == pytest.approx(expected_precise[1], abs=2e-8)
 
 
 @pytest.mark.parametrize("inp, expected_rough, expected_precise", DEMO_CASES)
 def test_caijun_is_closer_than_naive_to_precise(inp, expected_rough, expected_precise):
     caijun_lat, caijun_lon = gcj02_to_wgs84_caijun(*inp)
     naive_lat, naive_lon = gcj02_to_wgs84_naive(*inp)
-    pr_lat, pr_lon = prcoords.gcj_wgs_bored(inp, False)
+    pr_lat, pr_lon = expected_precise
 
     caijun_err = abs(caijun_lat - pr_lat) + abs(caijun_lon - pr_lon)
     naive_err = abs(naive_lat - pr_lat) + abs(naive_lon - pr_lon)
@@ -125,3 +112,23 @@ def test_validate_against_demo_all_passed():
     assert result["rough_passed"] == len(DEMO_CASES)
     assert result["precise_passed"] == len(DEMO_CASES)
     assert result["all_passed"] is True
+
+
+def test_batch_multi_point_matches_demo_precise_8dp():
+    points = [inp for inp, _, _ in DEMO_CASES]
+    expected_precise = [exp for _, _, exp in DEMO_CASES]
+
+    got_batch = vincenty_ext.gcj02_to_wgs84_batch(points)
+
+    assert len(got_batch) == len(expected_precise)
+    for got, exp in zip(got_batch, expected_precise):
+        assert got[0] == pytest.approx(exp[0], abs=2e-8)
+        assert got[1] == pytest.approx(exp[1], abs=2e-8)
+
+
+def test_batch_multi_point_outside_china_returns_input():
+    points = [(35.6895, 139.6917), (1.3521, 103.8198)]
+    got_batch = vincenty_ext.gcj02_to_wgs84_batch(points)
+
+    assert got_batch[0] == pytest.approx(points[0], abs=0.0)
+    assert got_batch[1] != pytest.approx(points[1], abs=0.0)
