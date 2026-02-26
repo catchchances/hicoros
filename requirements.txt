@@ -1,5 +1,0 @@
-prcoords
-fit-tool
-garmin-fit-sdk
-fit-tool
-garmin-fit-sdk

@@ -14,6 +14,11 @@ dependencies = [
 	"garmin-fit-sdk",
 ]
 
+[project.optional-dependencies]
+test = [
+	"pytest",
+]
+
 [project.scripts]
 hicoros = "hicoros.hitrava:main"
 hicoros-fit-check = "hicoros.fit_check_cli:main"
