@@ -2,6 +2,12 @@
 logs
 output
 
+# Node / web
+node_modules/
+web/node_modules/
+web/.env
+web/.env.*
+
 # macOS dir files
 .DS_Store
 

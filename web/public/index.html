@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>HiCOROS 网页转换工具（Naive JS）</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <main class="container">
+      <h1>HiCOROS 网页转换工具</h1>
+      <p class="desc">上传华为 JSON/ZIP，后端调用现有 hicoros CLI 生成 FIT 并直接下载。</p>
+
+      <form id="convertForm">
+        <label for="sourceFile">源文件（.json / .zip）</label>
+        <input id="sourceFile" name="sourceFile" type="file" accept=".json,.zip" required />
+
+        <label for="jsonSportFilter">可选：运动过滤（空格或逗号分隔）</label>
+        <input
+          id="jsonSportFilter"
+          name="jsonSportFilter"
+          type="text"
+          placeholder="例如：Run,Hike,Mountain_Hike"
+        />
+
+        <button id="submitBtn" type="submit">开始转换并下载</button>
+      </form>
+
+      <pre id="status"></pre>
+    </main>
+
+    <script src="./config.js"></script>
+    <script src="./script.js" type="module"></script>
+  </body>
+</html>

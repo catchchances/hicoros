@@ -26,6 +26,100 @@ uv run hicoros-fit-check path/to/activity.fit
 uv run pytest -q
 ```
 
+## Naive JavaScript 网页工具（纯 HTML + 原生 JS）
+
+如果你想用更“naive”的 JS 方式，可以使用仓库中的 `web/`：
+
+- 前端：纯静态页面（无打包、无框架）
+- 后端：Node.js + Express（上传文件并调用现有 `uv run hicoros`）
+
+### 1) 安装前端/服务依赖
+
+```bash
+cd web
+npm install
+```
+
+### 2) 启动网页工具
+
+```bash
+npm start
+```
+
+启动后访问：
+
+```text
+http://localhost:8080
+```
+
+### 3) 使用方式
+
+1. 上传 `.json` 或 `.zip`。
+2. 可选填写 `jsonSportFilter`（空格或逗号分隔）。
+3. 点击“开始转换并下载”。
+
+说明：
+
+- 该工具内部仍复用当前 Python CLI（`hicoros`）进行转换。
+- 如果转换得到多个 FIT，网页会自动下载一个 ZIP 包。
+
+## 使用 GitHub Pages 部署 `web` 前端
+
+> 注意：GitHub Pages 只能部署静态网页，不能直接运行 Node/Python 转换服务。
+> 因此推荐架构是：Pages 托管前端，转换 API 部署在你自己的服务器（VPS/Render/Railway 等）。
+
+仓库已提供工作流：
+
+- [`.github/workflows/deploy-web-pages.yml`](.github/workflows/deploy-web-pages.yml)
+
+### 步骤
+
+1. 在 GitHub 仓库开启 Pages：
+	- `Settings -> Pages -> Build and deployment -> Source` 选择 `GitHub Actions`。
+2. 在仓库变量中设置后端 API 地址（无尾斜杠）：
+	- `Settings -> Secrets and variables -> Actions -> Variables`
+	- 新建变量名：`HICOROS_API_BASE_URL`
+	- 变量值示例：`https://your-api.example.com`
+3. 推送 `main` 分支中 `web/**` 相关改动后，Actions 会自动发布页面。
+
+工作流会把 `web/public` 发布到 Pages，并在发布时自动写入 `config.js`：
+
+- `window.HICOROS_API_BASE_URL = "<你的后端地址>"`
+
+如果你不设置该变量，前端会默认请求相对地址（`./api/convert`），适合本地联调。
+
+## 全部使用 GitHub 的运行方式（Pages + Actions）
+
+如果你希望环境尽量都在 GitHub 内，可以使用：
+
+- Pages：托管前端页面
+- Actions：监听 `input/` 上传文件并自动转换 FIT
+
+仓库已提供工作流：
+
+- [`.github/workflows/convert-on-upload.yml`](.github/workflows/convert-on-upload.yml)
+
+目录约定：
+
+- 上传目录：`input/`（放 `.json` 或 `.zip`）
+- 转换结果目录：`web/public/results/`（生成 `.fit`）
+
+### 操作步骤
+
+1. 开启仓库 Pages（`Source: GitHub Actions`）。
+2. 把待转换文件提交到 `input/` 目录（网页上传或本地 git push 都可以）。
+3. 等待 `Convert Uploaded Activities` 工作流执行完成。
+4. 结果会提交到 `web/public/results/`，并由 Pages 自动发布。
+
+发布后可直接在 Pages 地址下载，例如：
+
+- `https://<your-org-or-user>.github.io/<repo>/results/<fit-file-name>.fit`
+
+说明：
+
+- `push` 到 `input/**` 时仅转换本次变更中的 `.json/.zip` 文件。
+- 手动触发（`workflow_dispatch`）时会扫描 `input/` 下所有 `.json/.zip` 文件。
+
 ## 主要命令
 
 ### 1) HiTrack 转 FIT
