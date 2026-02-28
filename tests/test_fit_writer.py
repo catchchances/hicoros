@@ -357,8 +357,8 @@ def test_save_fit_file_lap_total_calories_sum_matches_session_total(tmp_path):
     assert 80 in record_cadences
     assert 82 in record_cadences
     assert max(record_cadences) == 82
-    assert messages["lap_mesgs"][0].get("avg_cadence") == 81
-    assert messages["lap_mesgs"][0].get("max_cadence") == 82
+    assert messages["lap_mesgs"][0].get("avg_cadence") == 80
+    assert messages["lap_mesgs"][0].get("max_cadence") == 81
     assert messages["session_mesgs"][0].get("avg_cadence") == 81
     assert messages["session_mesgs"][0].get("max_cadence") == 82
     assert messages["session_mesgs"][0].get("total_cycles") is None
@@ -954,7 +954,17 @@ def test_save_fit_file_pause_events_emitted_between_segments(tmp_path):
     assert timer_events.count(("timer", "start")) >= 2, "resume START must appear after pause"
     assert timer_events[-1] == ("timer", "stop_all"), "last event must be timer stop_all"
 
+    # total_timer_time must equal the sum of active segment durations (5 min + 12 min = 17 min),
+    # NOT the full elapsed time (20 min) which includes the 3-minute pause.
+    session = messages["session_mesgs"][0]
+    expected_timer_s = 5 * 60 + 12 * 60  # 1020 s
+    assert session.get("total_timer_time") == pytest.approx(expected_timer_s, abs=1), (
+        f"total_timer_time should be {expected_timer_s}s (active only), got {session.get('total_timer_time')}"
+    )
+    assert session.get("total_elapsed_time") >= 20 * 60, "elapsed time must include the pause"
 
+
+def test_real_activity_fixture_hitrack_20230204_111830_cadence_cycles_regression(tmp_path: Path):
     garmin_fit_sdk = pytest.importorskip("garmin_fit_sdk")
 
     fixture_path = Path(__file__).resolve().parent / "fixtures" / "real_activity_20230204_111830.json"

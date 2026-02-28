@@ -434,6 +434,7 @@ def _build_fit_file(hi_activity: HiActivity):
     total_ascent = 0.0
     total_descent = 0.0
     record_points: list[dict] = []
+    per_segment_record_points: list[list[dict]] = []
     previous_point = None
     previous_export_cadence = None
     previous_export_cadence_timestamp = None
@@ -441,6 +442,7 @@ def _build_fit_file(hi_activity: HiActivity):
     valid_segments = [seg for seg in hi_activity.get_segments() if seg.get("start") and seg.get("stop")]
     for seg_idx, segment in enumerate(valid_segments):
         segment_records = []
+        segment_record_points: list[dict] = []
         for data in hi_activity.get_segment_data(segment):
             if "t" not in data:
                 continue
@@ -504,11 +506,13 @@ def _build_fit_file(hi_activity: HiActivity):
                 record.speed = point_speed
 
             record_points.append(point)
+            segment_record_points.append(point)
             previous_point = point
             segment_records.append(record)
 
         if segment_records:
             builder.add_all(segment_records)
+        per_segment_record_points.append(segment_record_points)
 
         # Emit timer STOP_ALL (pause) / START (resume) events between segments so that
         # FIT consumers (Garmin Connect, Strava, Coros, etc.) correctly attribute elapsed
@@ -531,7 +535,12 @@ def _build_fit_file(hi_activity: HiActivity):
     calories_total = _compute_total_calories(hi_activity)
 
     laps: list[tuple[object, float]] = []
-    generated_distance_laps = _build_distance_laps(record_points, lap_distance_m=1000.0)
+    # Generate distance laps per segment so that no lap spans a pause boundary.
+    # A cross-boundary lap would have total_timer_time that includes pause duration,
+    # causing Coros/Garmin to report inflated moving time and wrong average pace.
+    generated_distance_laps = []
+    for seg_points in per_segment_record_points:
+        generated_distance_laps.extend(_build_distance_laps(seg_points, lap_distance_m=1000.0))
 
     lap_total_timer = 0.0
     lap_total_distance = 0.0
