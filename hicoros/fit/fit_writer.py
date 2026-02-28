@@ -720,6 +720,17 @@ def _build_fit_file(hi_activity: HiActivity):
     if calories_total is not None:
         lap_calories = _distribute_calories_by_distance(calories_total, [lap_distance for _, lap_distance in laps])
 
+    # Scale each lap's total_timer_time so their sum matches the session timer_duration.
+    # GPS-segment time (lap_total_timer) can be larger than Huawei's authoritative totalTime
+    # because it includes micro-pauses (e.g. traffic lights) that the watch excluded via
+    # auto-pause but that are invisible in the GPS track.
+    source_timer = getattr(hi_activity, "timer_duration", None)
+    if source_timer and source_timer > 0 and lap_total_timer > 0 and abs(source_timer - lap_total_timer) > 1:
+        lap_scale = source_timer / lap_total_timer
+        for lap, _ in laps:
+            if lap.total_timer_time is not None:
+                lap.total_timer_time = lap.total_timer_time * lap_scale
+
     for index, (lap, _lap_distance) in enumerate(laps):
         if lap_calories is not None:
             lap.total_calories = lap_calories[index]
