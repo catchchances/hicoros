@@ -77,6 +77,11 @@ class HiActivity:
         self.start = None
         self.stop = None
         self.time_zone = None
+        # Authoritative active (timer) duration in seconds supplied by the source format (e.g. JSON
+        # totalTime field).  When set it is used as session.total_timer_time in the FIT output instead
+        # of the GPS-segment-derived value, because the source watch already accounts for micro-pauses
+        # (auto-pause at traffic lights, etc.) that the GPS data alone cannot reconstruct.
+        self.timer_duration = None
         # Huawei Health provided distance or in absence the calculated distance derived from GPS data.
         self.distance = -1
         # Calculated distance derived from GPS data may differ from Huawei Health recorded distance

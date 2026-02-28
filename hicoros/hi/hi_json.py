@@ -223,6 +223,7 @@ class HiJsonParser:
         hi_activity.start = activity_start
         hi_activity.time_zone = time_zone
         hi_activity.stop = activity_start + dts_delta(milliseconds=activity_dict["totalTime"])
+        hi_activity.timer_duration = activity_dict["totalTime"] / 1000.0
 
         if "totalDistance" in activity_detail_dict:
             hi_activity.distance = activity_detail_dict["totalDistance"]

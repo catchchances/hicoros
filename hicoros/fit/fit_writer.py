@@ -435,7 +435,6 @@ def _build_fit_file(hi_activity: HiActivity):
     total_descent = 0.0
     record_points: list[dict] = []
     per_segment_record_points: list[list[dict]] = []
-    previous_point = None
     previous_export_cadence = None
     previous_export_cadence_timestamp = None
     cadence_hold_ms = 5_000
@@ -443,6 +442,7 @@ def _build_fit_file(hi_activity: HiActivity):
     for seg_idx, segment in enumerate(valid_segments):
         segment_records = []
         segment_record_points: list[dict] = []
+        previous_point = None  # reset per segment so speed is not interpolated across pause boundaries
         for data in hi_activity.get_segment_data(segment):
             if "t" not in data:
                 continue
@@ -502,6 +502,21 @@ def _build_fit_file(hi_activity: HiActivity):
             }
 
             point_speed = _derive_record_speed_from_raw_rs(point)
+            if point_speed is None and previous_point is not None:
+                # Fall back to distance-delta speed for GPS-only records that carry no explicit
+                # speed/pace field.  previous_point is reset per segment so the delta never
+                # crosses a pause boundary.
+                delta_time_s = (record_ts - previous_point["timestamp"]) / 1000.0
+                prev_dist = previous_point.get("distance")
+                curr_dist = point.get("distance")
+                if (
+                    delta_time_s > 0
+                    and isinstance(prev_dist, (int, float))
+                    and isinstance(curr_dist, (int, float))
+                ):
+                    delta_dist = float(curr_dist) - float(prev_dist)
+                    if 0 <= delta_dist <= delta_time_s * 25:  # sanity cap at ~90 km/h
+                        point_speed = delta_dist / delta_time_s
             if point_speed is not None:
                 record.speed = point_speed
 
@@ -714,7 +729,11 @@ def _build_fit_file(hi_activity: HiActivity):
     session.timestamp = summary_stop_ts
     session.start_time = summary_start_ts
     session.total_elapsed_time = summary_elapsed
-    session.total_timer_time = summary_timer
+    # Prefer the source-reported timer duration (e.g. Huawei JSON totalTime) over the
+    # GPS-segment-derived sum, because the watch already accounts for micro-pauses
+    # (auto-pause at traffic lights, etc.) that GPS segments alone cannot reconstruct.
+    source_timer = getattr(hi_activity, "timer_duration", None)
+    session.total_timer_time = float(source_timer) if source_timer and source_timer > 0 else summary_timer
     session.total_distance = summary_distance
     session.total_ascent = total_ascent
     session.total_descent = total_descent
