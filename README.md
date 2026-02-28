@@ -152,6 +152,39 @@ uv run hicoros-fit-check path/to/activity.fit --fail-on-warning
 - `1`：存在错误（例如完整性校验失败）
 - `2`：仅有告警，且开启了 `--fail-on-warning`
 
+## 时间字段说明
+
+华为手表导出的运动数据中存在三层时间，含义各不相同，转换时需要分别对应到 FIT 的不同字段：
+
+```
+3:21:09  总挂钟时间（按开始 → 按停止的真实时长）
+   │
+   │  差值 = 手动暂停时间
+   │  用户主动按暂停键，HiTrack 以 (90, -80) 标记坐标编码，
+   │  在 GPS 分段（segment）之间形成空白，代码可识别并
+   │  在 FIT 中写入 timer STOP_ALL / START 事件
+   ▼
+2:44:00  GPS 分段时长之和（sum of segment durations）
+   │
+   │  差值 = 自动暂停（auto-pause）时间
+   │  用户未按暂停键，但在分段内停下（等红灯、休息等），
+   │  手表检测到速度低于阈值后静默停计时，GPS 轨迹仍在
+   │  同一分段内推进，这段时间在 GPS 数据中完全不可见
+   ▼
+2:25:40  华为 totalTime（手表实际计入的主动运动时间）
+```
+
+对应到 FIT 字段：
+
+| 含义 | 来源 | FIT 字段 |
+|---|---|---|
+| 总挂钟时间 | GPS 分段首尾时间戳差 | `session.total_elapsed_time` |
+| GPS 分段时长之和 | 各分段 stop - start 累加（按比例缩放后写入每圈） | `lap.total_timer_time`（缩放后） |
+| 主动运动时间 | 华为 JSON `totalTime` | `session.total_timer_time` |
+
+> 自动暂停时间无法从 GPS 数据中还原，因此各 lap 的 `total_timer_time`
+> 会按 `totalTime / GPS分段之和` 的比例统一缩放，使圈时之和与 session 主动运动时间保持一致。
+
 ## 依赖
 
 - `fit-tool`：生成 FIT
