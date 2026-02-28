@@ -884,7 +884,77 @@ def test_save_fit_file_record_speed_comes_from_tp_rs_end_to_end(tmp_path: Path):
     assert any(speed == pytest.approx(3.0, rel=1e-3) for speed in speeds)
 
 
-def test_real_activity_fixture_hitrack_20230204_111830_cadence_cycles_regression(tmp_path: Path):
+def test_save_fit_file_pause_events_emitted_between_segments(tmp_path):
+    """Timer STOP_ALL/START events must be interleaved with records at each pause boundary
+    so that FIT consumers can correctly distinguish elapsed time from moving time."""
+    garmin_fit_sdk = pytest.importorskip("garmin_fit_sdk")
+
+    class DummyPausedActivity:
+        def __init__(self):
+            self.activity_id = "dummy_paused"
+            self.start = datetime(2025, 1, 1, 10, 0, 0)
+            # segment 1: 0-5 min, pause 5-8 min, segment 2: 8-20 min
+            self.stop = self.start + timedelta(minutes=20)
+            self.time_zone = None
+            self.distance = 400.0
+            self.calories = None
+
+            self._segments = [
+                {
+                    "start": self.start,
+                    "stop": self.start + timedelta(minutes=5),
+                    "distance": 100.0,
+                },
+                {
+                    "start": self.start + timedelta(minutes=8),
+                    "stop": self.start + timedelta(minutes=20),
+                    "distance": 300.0,
+                },
+            ]
+
+            self._records = [
+                {"t": self.start, "distance": 0.0, "lat": 39.9, "lon": 116.3},
+                {"t": self.start + timedelta(minutes=5), "distance": 100.0, "lat": 39.901, "lon": 116.301},
+                {"t": self.start + timedelta(minutes=8), "distance": 100.0, "lat": 39.902, "lon": 116.302},
+                {"t": self.start + timedelta(minutes=20), "distance": 400.0, "lat": 39.905, "lon": 116.305},
+            ]
+
+        def get_activity_type(self):
+            return HiActivity.TYPE_RUN
+
+        def get_segments(self):
+            return self._segments
+
+        def get_segment_data(self, segment):
+            return [r for r in self._records if segment["start"] <= r["t"] <= segment["stop"]]
+
+        @staticmethod
+        def _is_marker_coordinate(lat, lon):
+            return (lat == 90 and lon == -80) or (lat == 0 and lon == 0)
+
+    fit_path = tmp_path / "paused.fit"
+    save_fit_file(DummyPausedActivity(), save_dir=str(tmp_path), fit_filename=str(fit_path))
+
+    messages, errors = garmin_fit_sdk.Decoder(garmin_fit_sdk.Stream.from_file(str(fit_path))).read(
+        convert_datetimes_to_dates=False
+    )
+
+    assert errors == []
+
+    # Extract timer events in order
+    timer_events = [
+        (e["event"], e["event_type"])
+        for e in messages.get("event_mesgs", [])
+        if e.get("event") == "timer"
+    ]
+
+    # Expect: START, STOP_ALL (pause), START (resume), STOP_ALL (final)
+    assert timer_events[0] == ("timer", "start"), "first event must be timer start"
+    assert ("timer", "stop_all") in timer_events[1:-1], "pause STOP_ALL must appear between segments"
+    assert timer_events.count(("timer", "start")) >= 2, "resume START must appear after pause"
+    assert timer_events[-1] == ("timer", "stop_all"), "last event must be timer stop_all"
+
+
     garmin_fit_sdk = pytest.importorskip("garmin_fit_sdk")
 
     fixture_path = Path(__file__).resolve().parent / "fixtures" / "real_activity_20230204_111830.json"

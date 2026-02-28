@@ -43,14 +43,6 @@ def _resolve_sport(hi_activity: HiActivity, sport_enum):
     return _enum_value(sport_enum, "RUNNING", default=None)
 
 
-def _iter_records(hi_activity: HiActivity):
-    for segment in hi_activity.get_segments():
-        segment_data = hi_activity.get_segment_data(segment)
-        for data in segment_data:
-            if "t" not in data:
-                continue
-            yield data
-
 
 def _compute_summary_values(
     default_start_ts: int,
@@ -434,7 +426,6 @@ def _build_fit_file(hi_activity: HiActivity):
     start_event.timestamp = start_ts
     builder.add(start_event)
 
-    records = []
     first_position = None
     last_position = None
     first_record_ts = None
@@ -447,74 +438,95 @@ def _build_fit_file(hi_activity: HiActivity):
     previous_export_cadence = None
     previous_export_cadence_timestamp = None
     cadence_hold_ms = 5_000
-    raw_data_points = list(_iter_records(hi_activity))
-    for data in raw_data_points:
-        record = RecordMessage()
-        record_ts = _to_epoch_millis(data["t"])
-        record.timestamp = record_ts
-        if first_record_ts is None:
-            first_record_ts = record_ts
-        last_record_ts = record_ts
+    valid_segments = [seg for seg in hi_activity.get_segments() if seg.get("start") and seg.get("stop")]
+    for seg_idx, segment in enumerate(valid_segments):
+        segment_records = []
+        for data in hi_activity.get_segment_data(segment):
+            if "t" not in data:
+                continue
+            record = RecordMessage()
+            record_ts = _to_epoch_millis(data["t"])
+            record.timestamp = record_ts
+            if first_record_ts is None:
+                first_record_ts = record_ts
+            last_record_ts = record_ts
 
-        if "distance" in data:
-            record_distance = float(data["distance"])
-            record.distance = record_distance
-            last_record_distance = record_distance
-        if "hr" in data:
-            record.heart_rate = int(data["hr"])
-        cadence_value = None
-        export_cadence_value = None
-        if isinstance(data.get("s-r"), (int, float)) and 0 <= float(data["s-r"]) <= 255:
-            cadence_value = int(data["s-r"])
-            export_cadence_value = min(int(round(cadence_value / 2.0)), 100)
-            previous_export_cadence = export_cadence_value
-            previous_export_cadence_timestamp = record_ts
-        elif previous_export_cadence is not None and previous_export_cadence_timestamp is not None:
-            export_delta_ms = record_ts - previous_export_cadence_timestamp
-            if 0 < export_delta_ms <= cadence_hold_ms:
-                export_cadence_value = previous_export_cadence
+            if "distance" in data:
+                record_distance = float(data["distance"])
+                record.distance = record_distance
+                last_record_distance = record_distance
+            if "hr" in data:
+                record.heart_rate = int(data["hr"])
+            cadence_value = None
+            export_cadence_value = None
+            if isinstance(data.get("s-r"), (int, float)) and 0 <= float(data["s-r"]) <= 255:
+                cadence_value = int(data["s-r"])
+                export_cadence_value = min(int(round(cadence_value / 2.0)), 100)
+                previous_export_cadence = export_cadence_value
+                previous_export_cadence_timestamp = record_ts
+            elif previous_export_cadence is not None and previous_export_cadence_timestamp is not None:
+                export_delta_ms = record_ts - previous_export_cadence_timestamp
+                if 0 < export_delta_ms <= cadence_hold_ms:
+                    export_cadence_value = previous_export_cadence
 
-        if export_cadence_value is not None:
-            record.cadence = export_cadence_value
+            if export_cadence_value is not None:
+                record.cadence = export_cadence_value
 
-        if "lat" in data and "lon" in data and not hi_activity._is_marker_coordinate(data["lat"], data["lon"]):
-            record.position_lat = float(data["lat"])
-            record.position_long = float(data["lon"])
-            if first_position is None:
-                first_position = (float(data["lat"]), float(data["lon"]))
-            last_position = (float(data["lat"]), float(data["lon"]))
-        if "alti" in data:
-            record.altitude = float(data["alti"])
+            if "lat" in data and "lon" in data and not hi_activity._is_marker_coordinate(data["lat"], data["lon"]):
+                record.position_lat = float(data["lat"])
+                record.position_long = float(data["lon"])
+                if first_position is None:
+                    first_position = (float(data["lat"]), float(data["lon"]))
+                last_position = (float(data["lat"]), float(data["lon"]))
+            if "alti" in data:
+                record.altitude = float(data["alti"])
 
-        point = {
-            "timestamp": record_ts,
-            "distance": float(data["distance"]) if isinstance(data.get("distance"), (int, float)) else None,
-            "alti": float(data["alti"]) if isinstance(data.get("alti"), (int, float)) else None,
-            "rs": float(data["rs"]) if isinstance(data.get("rs"), (int, float)) else None,
-            "r-pm-s": float(data["r-pm-s"]) if isinstance(data.get("r-pm-s"), (int, float)) else None,
-            "r-pm-p": float(data["r-pm-p"]) * 10.0
-            if is_swim_activity and isinstance(data.get("r-pm-p"), (int, float))
-            else float(data["r-pm-p"])
-            if isinstance(data.get("r-pm-p"), (int, float))
-            else None,
-            "pm-n": float(data["pm-n"]) if isinstance(data.get("pm-n"), (int, float)) else None,
-            "p-m": float(data["p-m"]) if isinstance(data.get("p-m"), (int, float)) else None,
-            "hr": int(data["hr"]) if isinstance(data.get("hr"), (int, float)) else None,
-            "s-r": int(data["s-r"]) if isinstance(data.get("s-r"), (int, float)) else None,
-            "total-cycles": None,
-        }
+            point = {
+                "timestamp": record_ts,
+                "distance": float(data["distance"]) if isinstance(data.get("distance"), (int, float)) else None,
+                "alti": float(data["alti"]) if isinstance(data.get("alti"), (int, float)) else None,
+                "rs": float(data["rs"]) if isinstance(data.get("rs"), (int, float)) else None,
+                "r-pm-s": float(data["r-pm-s"]) if isinstance(data.get("r-pm-s"), (int, float)) else None,
+                "r-pm-p": float(data["r-pm-p"]) * 10.0
+                if is_swim_activity and isinstance(data.get("r-pm-p"), (int, float))
+                else float(data["r-pm-p"])
+                if isinstance(data.get("r-pm-p"), (int, float))
+                else None,
+                "pm-n": float(data["pm-n"]) if isinstance(data.get("pm-n"), (int, float)) else None,
+                "p-m": float(data["p-m"]) if isinstance(data.get("p-m"), (int, float)) else None,
+                "hr": int(data["hr"]) if isinstance(data.get("hr"), (int, float)) else None,
+                "s-r": int(data["s-r"]) if isinstance(data.get("s-r"), (int, float)) else None,
+                "total-cycles": None,
+            }
 
-        point_speed = _derive_record_speed_from_raw_rs(point)
-        if point_speed is not None:
-            record.speed = point_speed
+            point_speed = _derive_record_speed_from_raw_rs(point)
+            if point_speed is not None:
+                record.speed = point_speed
 
-        record_points.append(point)
-        previous_point = point
+            record_points.append(point)
+            previous_point = point
+            segment_records.append(record)
 
-        records.append(record)
+        if segment_records:
+            builder.add_all(segment_records)
 
-    if records:
-        builder.add_all(records)
+        # Emit timer STOP_ALL (pause) / START (resume) events between segments so that
+        # FIT consumers (Garmin Connect, Strava, Coros, etc.) correctly attribute elapsed
+        # time during pauses to stopped time rather than moving time.
+        if seg_idx < len(valid_segments) - 1:
+            next_segment = valid_segments[seg_idx + 1]
+
+            pause_event = EventMessage()
+            pause_event.event = _enum_value(Event, "TIMER", default=None)
+            pause_event.event_type = _enum_value(EventType, "STOP_ALL", default=None)
+            pause_event.timestamp = _to_epoch_millis(segment["stop"])
+            builder.add(pause_event)
+
+            resume_event = EventMessage()
+            resume_event.event = _enum_value(Event, "TIMER", default=None)
+            resume_event.event_type = _enum_value(EventType, "START", default=None)
+            resume_event.timestamp = _to_epoch_millis(next_segment["start"])
+            builder.add(resume_event)
 
     calories_total = _compute_total_calories(hi_activity)
 
