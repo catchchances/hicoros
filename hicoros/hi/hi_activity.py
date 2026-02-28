@@ -774,12 +774,16 @@ class HiActivity:
         self.data_dict = collections.OrderedDict(sorted(self.data_dict.items()))
 
         # Pre-calculate all required Vincenty distances in one C++ call to reduce Python<->C++ round-trips.
+        # This loop must mirror the logic in the main calculation loop below to produce the exact same
+        # number of distance pairs as the main loop will consume.
         distance_pairs = []
         pre_last_location = None
+        pre_paused = False
         for data in self.data_dict.values():
             if "lat" in data:
                 if pre_last_location:
                     if data["lat"] == 90 and data["lon"] == -80:
+                        pre_paused = True
                         continue
                     if "lat" not in pre_last_location:
                         pre_last_location = data
@@ -788,12 +792,13 @@ class HiActivity:
                             (pre_last_location["lat"], pre_last_location["lon"], data["lat"], data["lon"])
                         )
                         pre_last_location = data
+                    pre_paused = False
                 else:
                     pre_last_location = data
             elif "rs" in data and self._activity_type != HiActivity.TYPE_OPEN_WATER_SWIM:
                 if pre_last_location:
                     time_delta = data["t"] - pre_last_location["t"]
-                    if "lat" not in pre_last_location or time_delta > GPS_TIMEOUT:
+                    if not pre_paused and ("lat" not in pre_last_location or time_delta > GPS_TIMEOUT):
                         pre_last_location = data
                 else:
                     pre_last_location = data
