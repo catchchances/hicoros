@@ -964,6 +964,187 @@ def test_save_fit_file_pause_events_emitted_between_segments(tmp_path):
     assert session.get("total_elapsed_time") >= 20 * 60, "elapsed time must include the pause"
 
 
+def test_save_fit_file_gps_only_records_get_speed_from_distance_delta(tmp_path):
+    """GPS records without any explicit speed fields (rs, r-pm-s, etc.) must get speed
+    derived from distance-delta / time-delta within each segment.  previous_point is reset
+    per segment so no cross-boundary speed spike is ever produced."""
+    garmin_fit_sdk = pytest.importorskip("garmin_fit_sdk")
+
+    class DummyGpsOnlyActivity:
+        def __init__(self):
+            self.activity_id = "gps_only"
+            self.start = datetime(2025, 1, 1, 10, 0, 0)
+            self.stop = self.start + timedelta(seconds=60)
+            self.time_zone = None
+            self.distance = 110.0
+            self.calories = None
+
+            # Two segments with a 30 s pause between them
+            self._segments = [
+                {"start": self.start, "stop": self.start + timedelta(seconds=10), "distance": 50.0},
+                {"start": self.start + timedelta(seconds=40), "stop": self.start + timedelta(seconds=60), "distance": 60.0},
+            ]
+            self._records = [
+                # Segment 1: 0 m → 50 m in 10 s  →  5.0 m/s
+                {"t": self.start, "distance": 0.0, "lat": 39.9, "lon": 116.3},
+                {"t": self.start + timedelta(seconds=10), "distance": 50.0, "lat": 39.901, "lon": 116.301},
+                # Segment 2: 50 m → 110 m in 20 s  →  3.0 m/s (not 110/60 ≈ 1.83 m/s)
+                {"t": self.start + timedelta(seconds=40), "distance": 50.0, "lat": 39.902, "lon": 116.302},
+                {"t": self.start + timedelta(seconds=60), "distance": 110.0, "lat": 39.903, "lon": 116.303},
+            ]
+
+        def get_activity_type(self):
+            return HiActivity.TYPE_RUN
+
+        def get_segments(self):
+            return self._segments
+
+        def get_segment_data(self, segment):
+            return [r for r in self._records if segment["start"] <= r["t"] <= segment["stop"]]
+
+        @staticmethod
+        def _is_marker_coordinate(lat, lon):
+            return (lat == 90 and lon == -80) or (lat == 0 and lon == 0)
+
+    fit_path = tmp_path / "gps_only.fit"
+    save_fit_file(DummyGpsOnlyActivity(), save_dir=str(tmp_path), fit_filename=str(fit_path))
+
+    messages, errors = garmin_fit_sdk.Decoder(garmin_fit_sdk.Stream.from_file(str(fit_path))).read(
+        convert_datetimes_to_dates=False
+    )
+
+    assert errors == []
+    record_mesgs = messages.get("record_mesgs", [])
+    assert len(record_mesgs) == 4
+    speeds = [msg.get("speed") for msg in record_mesgs]
+
+    # First record of segment 1: no previous point → no speed
+    assert speeds[0] is None
+    # Second record of segment 1: 50 m / 10 s = 5.0 m/s
+    assert speeds[1] == pytest.approx(5.0, rel=1e-3)
+    # First record of segment 2: previous_point reset per segment → no speed
+    assert speeds[2] is None
+    # Second record of segment 2: (110-50) m / (60-40) s = 3.0 m/s, not cross-boundary 110/60 ≈ 1.83
+    assert speeds[3] == pytest.approx(3.0, rel=1e-3)
+
+
+def test_save_fit_file_session_timer_uses_timer_duration_when_set(tmp_path):
+    """When hi_activity.timer_duration is set, session.total_timer_time must equal
+    timer_duration (the watch's authoritative moving time), not the GPS-segment-derived sum."""
+    garmin_fit_sdk = pytest.importorskip("garmin_fit_sdk")
+
+    class DummyTimerDurationActivity:
+        def __init__(self):
+            self.activity_id = "timer_duration_session"
+            self.start = datetime(2025, 1, 1, 10, 0, 0)
+            self.stop = self.start + timedelta(minutes=20)
+            self.time_zone = None
+            self.distance = 400.0
+            self.calories = None
+            # GPS segments sum to 5+12 = 17 min = 1020 s.
+            # Watch reports 1500 s (25 min) as authoritative timer.
+            self.timer_duration = 1500.0
+
+            self._segments = [
+                {"start": self.start, "stop": self.start + timedelta(minutes=5), "distance": 100.0},
+                {"start": self.start + timedelta(minutes=8), "stop": self.start + timedelta(minutes=20), "distance": 300.0},
+            ]
+            self._records = [
+                {"t": self.start, "distance": 0.0, "lat": 39.9, "lon": 116.3},
+                {"t": self.start + timedelta(minutes=5), "distance": 100.0, "lat": 39.901, "lon": 116.301},
+                {"t": self.start + timedelta(minutes=8), "distance": 100.0, "lat": 39.902, "lon": 116.302},
+                {"t": self.start + timedelta(minutes=20), "distance": 400.0, "lat": 39.905, "lon": 116.305},
+            ]
+
+        def get_activity_type(self):
+            return HiActivity.TYPE_RUN
+
+        def get_segments(self):
+            return self._segments
+
+        def get_segment_data(self, segment):
+            return [r for r in self._records if segment["start"] <= r["t"] <= segment["stop"]]
+
+        @staticmethod
+        def _is_marker_coordinate(lat, lon):
+            return (lat == 90 and lon == -80) or (lat == 0 and lon == 0)
+
+    fit_path = tmp_path / "timer_duration_session.fit"
+    save_fit_file(DummyTimerDurationActivity(), save_dir=str(tmp_path), fit_filename=str(fit_path))
+
+    messages, errors = garmin_fit_sdk.Decoder(garmin_fit_sdk.Stream.from_file(str(fit_path))).read(
+        convert_datetimes_to_dates=False
+    )
+
+    assert errors == []
+    session = messages["session_mesgs"][0]
+    # Must use timer_duration=1500 s, not GPS-segment sum=1020 s
+    assert session.get("total_timer_time") == pytest.approx(1500.0, abs=1)
+    # Elapsed time spans the full 20 min including the pause
+    assert session.get("total_elapsed_time") >= 20 * 60
+
+
+def test_save_fit_file_lap_timer_times_scaled_to_timer_duration(tmp_path):
+    """When timer_duration differs from the GPS-segment lap sum, each lap's total_timer_time
+    is scaled proportionally so that their sum equals timer_duration."""
+    garmin_fit_sdk = pytest.importorskip("garmin_fit_sdk")
+
+    class DummyScaledLapActivity:
+        def __init__(self):
+            self.activity_id = "scaled_laps"
+            self.start = datetime(2025, 1, 1, 10, 0, 0)
+            # 2000 m in 1200 s GPS time, but watch reports 900 s as active time
+            self.stop = self.start + timedelta(seconds=1200)
+            self.time_zone = None
+            self.distance = 2000.0
+            self.calories = None
+            self.timer_duration = 900.0  # scale = 900/1200 = 0.75
+
+            self._segments = [
+                {"start": self.start, "stop": self.stop, "distance": 2000.0},
+            ]
+            self._records = [
+                {"t": self.start, "distance": 0.0, "lat": 39.9, "lon": 116.3},
+                {"t": self.start + timedelta(seconds=600), "distance": 1000.0, "lat": 39.905, "lon": 116.305},
+                {"t": self.start + timedelta(seconds=1200), "distance": 2000.0, "lat": 39.910, "lon": 116.310},
+            ]
+
+        def get_activity_type(self):
+            return HiActivity.TYPE_RUN
+
+        def get_segments(self):
+            return self._segments
+
+        def get_segment_data(self, segment):
+            return [r for r in self._records if segment["start"] <= r["t"] <= segment["stop"]]
+
+        @staticmethod
+        def _is_marker_coordinate(lat, lon):
+            return (lat == 90 and lon == -80) or (lat == 0 and lon == 0)
+
+    fit_path = tmp_path / "scaled_laps.fit"
+    save_fit_file(DummyScaledLapActivity(), save_dir=str(tmp_path), fit_filename=str(fit_path))
+
+    messages, errors = garmin_fit_sdk.Decoder(garmin_fit_sdk.Stream.from_file(str(fit_path))).read(
+        convert_datetimes_to_dates=False
+    )
+
+    assert errors == []
+    session = messages["session_mesgs"][0]
+    lap_mesgs = messages.get("lap_mesgs", [])
+
+    # Session must use timer_duration, not GPS sum
+    assert session.get("total_timer_time") == pytest.approx(900.0, abs=1)
+
+    # Both 1000 m laps must have total_timer_time set and scaled
+    lap_timers = [lap.get("total_timer_time") for lap in lap_mesgs if lap.get("total_distance", 0) > 0]
+    assert len(lap_timers) == 2
+    # GPS lap sum = 600 + 600 = 1200 s; scale = 0.75 → each lap ≈ 450 s
+    for timer in lap_timers:
+        assert timer == pytest.approx(450.0, abs=2)
+    assert sum(lap_timers) == pytest.approx(900.0, abs=2)
+
+
 def test_real_activity_fixture_hitrack_20230204_111830_cadence_cycles_regression(tmp_path: Path):
     garmin_fit_sdk = pytest.importorskip("garmin_fit_sdk")
 

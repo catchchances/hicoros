@@ -4,6 +4,7 @@ from datetime import timedelta
 import pytest
 
 from hicoros.hi.hi_track_file import HiTrackFileParser
+from hicoros.hi.hi_activity import HiActivity
 
 
 def test_hitrack_file_parse_minimal_location_line(tmp_path: Path):
@@ -240,6 +241,35 @@ def test_hitrack_file_parse_lbs_does_not_set_alti(tmp_path: Path):
     assert activity.data_dict[activity.start]["lbs-k"] == 0.0
     assert "k" not in activity.data_dict[activity.start]
     assert "alti" not in activity.data_dict[activity.start]
+
+
+def test_hitrack_parse_speed_record_during_pause_does_not_cause_index_error(tmp_path: Path):
+    """Speed record (tp=rs) appearing during a manual pause must not corrupt the Vincenty
+    pre-calc distance count.  Before the pre_paused fix, the RS record with time_delta >
+    GPS_TIMEOUT would overwrite pre_last_location, making the pre-calc batch produce one
+    fewer distance pair than the main loop expected, causing an IndexError when GPS resumed."""
+    hitrack_name = "HiTrack_170000000017000006000001"
+    hitrack_path = tmp_path / hitrack_name
+    hitrack_path.write_text(
+        # Real GPS fix
+        "tp=lbs;k=0;lat=39.9042;lon=116.4074;alt=0;t=1700000000\n"
+        # Manual pause marker (lat=90, lon=-80)
+        "tp=lbs;k=1;lat=90;lon=-80;alt=0;t=1700000030\n"
+        # Speed record 50 s after activity start (> GPS_TIMEOUT=10 s), while still paused
+        "tp=rs;k=50;v=30\n"
+        # GPS resumes after pause
+        "tp=lbs;k=2;lat=39.9050;lon=116.4080;alt=0;t=1700000100\n",
+        encoding="utf-8",
+    )
+
+    parser = HiTrackFileParser(str(hitrack_path))
+    activity = parser.parse()
+
+    assert activity is not None
+    segments = activity.get_segments()
+    # Expect two segments: before and after the pause
+    assert len(segments) == 2
+    assert all(seg.get("start") is not None and seg.get("stop") is not None for seg in segments)
 
 
 def test_hitrack_file_parse_raises_original_exception(tmp_path: Path):
