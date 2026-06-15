@@ -246,15 +246,15 @@ node安装依赖:
 
 进入web文件夹后使用:npm install
 
-食用方式：
+两种食用方式：
 
-网页使用:
+1. 网页使用:
 
 得先执行命令启动网页服务器(web目录执行):npm start，然后访问: http://localhost:8080
 
 依次上传华为导出的json文件后点击"开始转换并下载"
 
-命令行使用（项目根目录运行）:
+2. 命令行使用（项目根目录运行）:
 
 uv run hicoros --json "path/华为运动导出的json文件.json" --output_dir output --json_sport_filter Run Hike Mountain_Hike
 
