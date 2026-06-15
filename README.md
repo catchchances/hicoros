@@ -1,3 +1,5 @@
+**简便教程见最后**
+
 Hi COROS
 
 将华为 HiTrack 运动数据转换为 FIT 文件的命令行工具。
@@ -222,3 +224,35 @@ uv run hicoros-fit-check path/to/activity.fit --fail-on-warning
 6. 自检通过后，将 FIT 文件导入 Garmin Connect（网页端“导入数据”）。
 
 > 提示：如果你一次导出多条运动，可对 `./output/*.fit` 批量执行 `uv run hicoros-fit-check`，先过滤掉异常文件再导入。
+
+
+**简便教程**(只考虑windows)**
+
+基础环境准备:
+
+安装Python:官方下载python3最新版本即可
+
+安装uv：winget install uv
+
+安装node:官方下载最新node
+
+项目基本准备：
+
+uv安装部分依赖:
+
+uv sync --extra test --frozen
+
+node安装依赖:
+
+进入web文件夹后使用:npm install
+
+食用方式：
+
+网页使用:
+
+得先执行命令启动网页服务器(web目录执行):npm start，然后访问http://localhost:8080，依次上传华为导出的json文件后点击"开始转换并下载"
+
+命令行使用（项目根目录运行）:
+
+uv run hicoros --json "path/华为运动导出的json文件.json" --output_dir output --json_sport_filter Run Hike Mountain_Hike
+
